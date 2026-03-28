@@ -1,6 +1,7 @@
 import { useParams } from 'react-router-dom'
 import { useServerStore } from '../store/serverStore'
 import { ChannelHeader } from '../components/ChannelHeader'
+import { AISummaryBar } from '../components/AISummaryBar'
 import { MessageList } from '../components/MessageList'
 import { MessageInput } from '../components/MessageInput'
 
@@ -18,9 +19,12 @@ export function ChannelView() {
     )
   }
 
+  const hasAgent = channel.type === 'ai' || channel.type === 'digest'
+
   return (
     <div className="flex-1 flex flex-col bg-bg-tertiary min-w-0 h-full">
       <ChannelHeader channel={channel} />
+      <AISummaryBar channelId={channelId} hasAgent={hasAgent} />
       <MessageList channelId={channelId} />
       <MessageInput channelId={channelId} channelName={channel.name} />
     </div>

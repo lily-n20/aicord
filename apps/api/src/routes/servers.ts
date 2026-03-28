@@ -5,6 +5,7 @@ import { db } from '../db'
 import { servers, memberships, users } from '../db/schema'
 import { requireAuth } from '../middleware/auth'
 import { Errors } from '../lib/errors'
+import { sanitizeName } from '../lib/sanitize'
 
 function toSlug(name: string): string {
   return name
@@ -73,11 +74,12 @@ export const serverRoutes: FastifyPluginAsync = async (fastify) => {
     const body = createServerSchema.safeParse(request.body)
     if (!body.success) throw Errors.VALIDATION_ERROR(body.error.flatten())
 
-    const slug = await uniqueSlug(toSlug(body.data.name))
+    const cleanName = sanitizeName(body.data.name)
+    const slug = await uniqueSlug(toSlug(cleanName))
 
     const [server] = await db
       .insert(servers)
-      .values({ name: body.data.name, slug, iconUrl: body.data.iconUrl ?? null, ownerId: request.user.sub })
+      .values({ name: cleanName, slug, iconUrl: body.data.iconUrl ?? null, ownerId: request.user.sub })
       .returning()
 
     // Creator becomes owner
@@ -108,7 +110,7 @@ export const serverRoutes: FastifyPluginAsync = async (fastify) => {
     if (!body.success) throw Errors.VALIDATION_ERROR(body.error.flatten())
 
     const updates: Record<string, unknown> = {}
-    if (body.data.name !== undefined) updates.name = body.data.name
+    if (body.data.name !== undefined) updates.name = sanitizeName(body.data.name)
     if (body.data.iconUrl !== undefined) updates.iconUrl = body.data.iconUrl
 
     const [updated] = await db.update(servers).set(updates).where(eq(servers.id, id)).returning()

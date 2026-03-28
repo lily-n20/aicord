@@ -6,6 +6,7 @@ import { users, servers, memberships } from '../db/schema'
 import { verifyAccessToken } from '../lib/jwt'
 import { logger } from '../lib/logger'
 import { redisSub } from '../lib/redis'
+import { metrics } from '../middleware/requestLogger'
 import type { WSEvent, ReadyPayload } from '@aicord/shared'
 
 interface ConnectedClient {
@@ -116,6 +117,7 @@ export const wsRoutes: FastifyPluginAsync = async (fastify) => {
       lastHeartbeat: Date.now(),
     }
     clients.set(userId, client)
+    metrics.wsConnections++
 
     send<ReadyPayload>(ws, 'READY', {
       user: {
@@ -147,6 +149,7 @@ export const wsRoutes: FastifyPluginAsync = async (fastify) => {
     }, 10_000)
 
     ws.on('message', async (raw) => {
+      metrics.wsMessages++
       let event: WSEvent
       try {
         event = JSON.parse(raw.toString())
@@ -200,8 +203,9 @@ export const wsRoutes: FastifyPluginAsync = async (fastify) => {
     ws.on('close', async () => {
       clearInterval(heartbeatWatchdog)
       clients.delete(userId)
+      metrics.wsConnections--
       await db.update(users).set({ presence: 'offline', updatedAt: new Date() }).where(eq(users.id, userId))
-      logger.info({ userId }, 'WebSocket client disconnected')
+      logger.info({ userId, activeConnections: clients.size }, 'WebSocket client disconnected')
     })
 
     ws.on('error', (err) => {

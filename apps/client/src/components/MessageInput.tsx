@@ -1,19 +1,59 @@
-import { useState, useRef, KeyboardEvent } from 'react'
+import { useState, useRef, KeyboardEvent, useCallback } from 'react'
 import { useMessageStore } from '../store/messageStore'
 import { useAuthStore } from '../store/authStore'
 import { wsClient } from '../lib/ws'
+import { api } from '../lib/api'
 
 const MAX_LENGTH = 2000
 const WARN_AT = 1800
+const SUGGEST_DEBOUNCE_MS = 2000
+const SUGGEST_THROTTLE_MS = 3000
 
 export function MessageInput({ channelId, channelName }: { channelId: string; channelName: string }) {
   const [content, setContent] = useState('')
+  const [suggestion, setSuggestion] = useState<string | null>(null)
   const { sendMessage } = useMessageStore()
   const { user } = useAuthStore()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const typingRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSuggestTimeRef = useRef<number>(0)
+
+  const fetchSuggestion = useCallback(async (draft: string) => {
+    const now = Date.now()
+    if (now - lastSuggestTimeRef.current < SUGGEST_THROTTLE_MS) return
+    lastSuggestTimeRef.current = now
+
+    try {
+      const res = await api.post<{ suggestion: string | null }>(
+        `/channels/${channelId}/ai/suggest`,
+        { content: draft }
+      )
+      // Only apply if the draft hasn't changed while we were waiting
+      setSuggestion(res.suggestion)
+    } catch {
+      // Suggestion failures are silent
+    }
+  }, [channelId])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab' && suggestion) {
+      e.preventDefault()
+      setContent(suggestion)
+      setSuggestion(null)
+      // Resize after applying suggestion
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto'
+          textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
+        }
+      })
+      return
+    }
+    if (e.key === 'Escape' && suggestion) {
+      setSuggestion(null)
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -23,6 +63,7 @@ export function MessageInput({ channelId, channelName }: { channelId: string; ch
   const handleChange = (value: string) => {
     if (value.length > MAX_LENGTH) return
     setContent(value)
+    setSuggestion(null)
 
     // Typing indicator debounce
     if (!typingRef.current) {
@@ -38,11 +79,21 @@ export function MessageInput({ channelId, channelName }: { channelId: string; ch
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
     }
+
+    // AI suggestion debounce — trigger after 2s of inactivity
+    if (suggestDebounceRef.current) clearTimeout(suggestDebounceRef.current)
+    if (value.trim().length >= 3) {
+      suggestDebounceRef.current = setTimeout(() => {
+        fetchSuggestion(value.trim())
+      }, SUGGEST_DEBOUNCE_MS)
+    }
   }
 
   const handleSend = async () => {
     const trimmed = content.trim()
     if (!trimmed || !user) return
+    setSuggestion(null)
+    if (suggestDebounceRef.current) clearTimeout(suggestDebounceRef.current)
     setContent('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
     await sendMessage(channelId, trimmed, user.id, user.username)
@@ -81,9 +132,21 @@ export function MessageInput({ channelId, channelName }: { channelId: string; ch
           </button>
         </div>
       </div>
-      <p className="text-text-muted text-xs mt-1.5 px-1">
-        <strong>Enter</strong> to send · <strong>Shift+Enter</strong> for new line · **bold** · *italic* · `code`
-      </p>
+      {suggestion && (
+        <div className="mt-1.5 px-1 flex items-start gap-2">
+          <span className="text-brand text-xs font-semibold flex-shrink-0 mt-0.5">✦ AI</span>
+          <p className="text-text-muted text-xs italic flex-1 truncate">{suggestion}</p>
+          <span className="text-text-muted text-xs flex-shrink-0">
+            <kbd className="bg-bg-modifier px-1 py-0.5 rounded text-xs">Tab</kbd> accept ·{' '}
+            <kbd className="bg-bg-modifier px-1 py-0.5 rounded text-xs">Esc</kbd> dismiss
+          </span>
+        </div>
+      )}
+      {!suggestion && (
+        <p className="text-text-muted text-xs mt-1.5 px-1">
+          <strong>Enter</strong> to send · <strong>Shift+Enter</strong> for new line · **bold** · *italic* · `code`
+        </p>
+      )}
     </div>
   )
 }

@@ -8,6 +8,7 @@ import { buildContext } from './ContextBuilder'
 import type { LLMAdapter } from './LLMAdapter'
 import { AnthropicAdapter } from './AnthropicAdapter'
 import { MockAdapter } from './MockAdapter'
+import { metrics } from '../../middleware/requestLogger'
 
 const AI_MENTION_RE = /@ai\b/i
 
@@ -57,7 +58,6 @@ export class AIService {
     messageId: string,
     content: string
   ): Promise<void> {
-    // Count messages since last AI post
     const [lastAIMsg] = await db
       .select({ createdAt: messages.createdAt })
       .from(messages)
@@ -81,13 +81,87 @@ export class AIService {
     }
   }
 
+  /** Generate an inline reply suggestion without creating a message in the channel */
+  async generateSuggestion(
+    channelId: string,
+    draftContent: string
+  ): Promise<string | null> {
+    const [agent] = await db
+      .select()
+      .from(aiAgents)
+      .where(and(eq(aiAgents.channelId, channelId), eq(aiAgents.enabled, true)))
+      .limit(1)
+
+    if (!agent) return null
+
+    const recentRows = await db
+      .select({ content: messages.content, authorType: messages.authorType })
+      .from(messages)
+      .where(and(eq(messages.channelId, channelId), eq(sql`${messages.content} != '[deleted]'`, true)))
+      .orderBy(desc(messages.createdAt))
+      .limit(10)
+
+    const history = recentRows.reverse().map((r) => ({
+      role: (r.authorType === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant',
+      content: r.content,
+    }))
+
+    const systemPrompt = [
+      agent.persona ?? 'You are AICORD AI, a helpful assistant.',
+      '',
+      'The user is drafting a message. Suggest a concise, natural completion or reply (1-2 sentences max).',
+      'Return ONLY the suggested text — no preamble, no quotes.',
+    ].join('\n')
+
+    const suggestionMessages = [
+      ...history,
+      {
+        role: 'user' as const,
+        content: `I am drafting this message: "${draftContent}"\n\nSuggest a concise completion or reply for me to send.`,
+      },
+    ]
+
+    try {
+      const startMs = Date.now()
+      let suggestion = ''
+      for await (const token of this.adapter.complete(suggestionMessages, {
+        model: agent.model,
+        maxTokens: 120,
+        systemPrompt,
+      })) {
+        suggestion += token
+      }
+      logger.info(
+        { channelId, model: agent.model, latencyMs: Date.now() - startMs },
+        'AI suggestion generated'
+      )
+      return suggestion.trim() || null
+    } catch (err) {
+      logger.warn({ err, channelId }, 'Suggestion generation failed')
+      return null
+    }
+  }
+
+  /** Convenience wrapper for digest — posts with metadata.digest flag */
+  async invokeDigest(
+    agent: typeof aiAgents.$inferSelect,
+    channelId: string,
+    prompt: string
+  ): Promise<string> {
+    return this.invokeAgent(agent, channelId, 'digest', prompt, 'summarize', { digest: true })
+  }
+
   async invokeAgent(
     agent: typeof aiAgents.$inferSelect,
     channelId: string,
     triggeringMessageId: string,
     triggeringContent: string,
-    trigger: 'mention' | 'auto' | 'summarize'
+    trigger: 'mention' | 'auto' | 'summarize',
+    extraMeta: Record<string, unknown> = {}
   ): Promise<string> {
+    const startMs = Date.now()
+    metrics.aiInvocations++
+
     // Fetch recent messages (last 30)
     const recentRows = await db
       .select({
@@ -122,6 +196,8 @@ export class AIService {
       triggeringMessage: triggeringContent,
     })
 
+    const baseMeta = { streaming: true, trigger, auto_triggered: trigger === 'auto', ...extraMeta }
+
     // Create a placeholder streaming message
     const [aiMsg] = await db
       .insert(messages)
@@ -130,7 +206,7 @@ export class AIService {
         authorId: null,
         authorType: 'ai',
         content: '',
-        metadata: JSON.stringify({ streaming: true, trigger, auto_triggered: trigger === 'auto' }),
+        metadata: JSON.stringify(baseMeta),
       })
       .returning()
 
@@ -145,7 +221,7 @@ export class AIService {
           authorId: null,
           authorType: 'ai',
           content: '',
-          metadata: { streaming: true, trigger, auto_triggered: trigger === 'auto' },
+          metadata: baseMeta,
           editedAt: null,
           createdAt: aiMsg.createdAt.toISOString(),
           author: null,
@@ -155,6 +231,7 @@ export class AIService {
 
     let fullContent = ''
     let interrupted = false
+    let tokenCount = 0
 
     try {
       for await (const token of this.adapter.complete(context.messages, {
@@ -163,6 +240,7 @@ export class AIService {
         systemPrompt: context.systemPrompt,
       })) {
         fullContent += token
+        tokenCount++
         await redis.publish(
           `channel:${channelId}`,
           JSON.stringify({
@@ -173,7 +251,7 @@ export class AIService {
               authorId: null,
               authorType: 'ai',
               content: fullContent,
-              metadata: { streaming: true },
+              metadata: { streaming: true, ...extraMeta },
               editedAt: null,
               createdAt: aiMsg.createdAt.toISOString(),
               author: null,
@@ -187,17 +265,40 @@ export class AIService {
       if (!fullContent) fullContent = "I'm having trouble responding right now."
     }
 
+    const latencyMs = Date.now() - startMs
+    // Estimate prompt tokens as chars/4
+    const promptTokensEstimate = Math.ceil(
+      (context.systemPrompt.length + context.messages.reduce((acc, m) => acc + m.content.length, 0)) / 4
+    )
+
+    logger.info(
+      {
+        channelId,
+        model: agent.model,
+        trigger,
+        latencyMs,
+        completionTokensEstimate: tokenCount,
+        promptTokensEstimate,
+        interrupted,
+        ...extraMeta,
+      },
+      'AI agent invocation complete'
+    )
+
+    const finalMeta = {
+      streaming: false,
+      trigger,
+      auto_triggered: trigger === 'auto',
+      interrupted,
+      ...extraMeta,
+    }
+
     // Persist final content
     await db
       .update(messages)
       .set({
         content: fullContent,
-        metadata: JSON.stringify({
-          streaming: false,
-          trigger,
-          auto_triggered: trigger === 'auto',
-          interrupted,
-        }),
+        metadata: JSON.stringify(finalMeta),
       })
       .where(eq(messages.id, aiMsg.id))
 
@@ -212,7 +313,7 @@ export class AIService {
           authorId: null,
           authorType: 'ai',
           content: fullContent,
-          metadata: { streaming: false, trigger, auto_triggered: trigger === 'auto', interrupted },
+          metadata: finalMeta,
           editedAt: null,
           createdAt: aiMsg.createdAt.toISOString(),
           author: null,

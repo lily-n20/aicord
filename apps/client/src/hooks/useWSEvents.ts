@@ -6,6 +6,7 @@ import { usePresenceStore } from '../store/presenceStore'
 import { useWSStore } from '../store/wsStore'
 import { useReactionStore, ReactionGroup } from '../store/reactionStore'
 import { useTypingStore } from '../store/typingStore'
+import { useSummaryStore, SummaryEntry } from '../store/summaryStore'
 import type { ReadyPayload, Presence } from '@aicord/shared'
 
 export function useWSEvents() {
@@ -47,6 +48,12 @@ export function useWSEvents() {
       wsClient.on<{ userId: string; channelId: string }>('TYPING_START', ({ userId, channelId }) => {
         useTypingStore.getState().setTyping(channelId, userId)
       }),
+      wsClient.on<{ channelId: string; summary: string; messageCount: number; generatedAt: string }>(
+        'AI_SUMMARY',
+        ({ channelId, summary, messageCount, generatedAt }) => {
+          useSummaryStore.getState().setSummary(channelId, { summary, messageCount, generatedAt })
+        }
+      ),
     ]
     return () => offs.forEach((off) => off())
   }, [])

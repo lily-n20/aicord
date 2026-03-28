@@ -6,6 +6,7 @@ import { dmChannels, dmParticipants, messages, users } from '../db/schema'
 import { requireAuth } from '../middleware/auth'
 import { Errors } from '../lib/errors'
 import { redis } from '../lib/redis'
+import { sanitizeContent } from '../lib/sanitize'
 
 function serializeMessage(msg: typeof messages.$inferSelect, author?: { username: string; avatarUrl: string | null } | null) {
   return {
@@ -184,9 +185,11 @@ export const dmRoutes: FastifyPluginAsync = async (fastify) => {
       .where(eq(users.id, request.user.sub))
       .limit(1)
 
+    const sanitized = sanitizeContent(body.data.content)
+
     const [message] = await db
       .insert(messages)
-      .values({ channelId: id, authorId: request.user.sub, authorType: 'user', content: body.data.content })
+      .values({ channelId: id, authorId: request.user.sub, authorType: 'user', content: sanitized })
       .returning()
 
     const payload = serializeMessage(message, user ? { username: user.username, avatarUrl: user.avatarUrl } : null)

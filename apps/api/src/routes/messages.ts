@@ -8,6 +8,7 @@ import { Errors } from '../lib/errors'
 import { redis } from '../lib/redis'
 import { logger } from '../lib/logger'
 import { aiService } from '../services/ai/AIService'
+import { sanitizeContent } from '../lib/sanitize'
 
 async function assertChannelAccess(channelId: string, userId: string) {
   const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1)
@@ -112,9 +113,11 @@ export const messageRoutes: FastifyPluginAsync = async (fastify) => {
       .where(eq(users.id, request.user.sub))
       .limit(1)
 
+    const sanitized = sanitizeContent(body.data.content)
+
     const [message] = await db
       .insert(messages)
-      .values({ channelId: id, authorId: request.user.sub, authorType: 'user', content: body.data.content })
+      .values({ channelId: id, authorId: request.user.sub, authorType: 'user', content: sanitized })
       .returning()
 
     const payload = serializeMessage(message, user ? { username: user.username, avatarUrl: user.avatarUrl } : null)
@@ -123,7 +126,7 @@ export const messageRoutes: FastifyPluginAsync = async (fastify) => {
     await redis.publish(`channel:${id}`, JSON.stringify({ op: 'MESSAGE_CREATE', d: payload }))
 
     // Trigger AI service non-blocking
-    aiService.handleNewMessage(message.id, id, body.data.content, request.user.sub).catch((err) =>
+    aiService.handleNewMessage(message.id, id, sanitized, request.user.sub).catch((err) =>
       logger.warn({ err }, 'AI service error')
     )
 
@@ -143,7 +146,7 @@ export const messageRoutes: FastifyPluginAsync = async (fastify) => {
 
     const [updated] = await db
       .update(messages)
-      .set({ content: body.data.content, editedAt: new Date() })
+      .set({ content: sanitizeContent(body.data.content), editedAt: new Date() })
       .where(eq(messages.id, id))
       .returning()
 
