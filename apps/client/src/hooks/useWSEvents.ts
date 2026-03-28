@@ -4,6 +4,8 @@ import { useServerStore } from '../store/serverStore'
 import { useMessageStore, MessageWithAuthor } from '../store/messageStore'
 import { usePresenceStore } from '../store/presenceStore'
 import { useWSStore } from '../store/wsStore'
+import { useReactionStore, ReactionGroup } from '../store/reactionStore'
+import { useTypingStore } from '../store/typingStore'
 import type { ReadyPayload, Presence } from '@aicord/shared'
 
 export function useWSEvents() {
@@ -36,6 +38,15 @@ export function useWSEvents() {
       wsClient.on<{ userId: string; presence: Presence }>('PRESENCE_UPDATE', ({ userId, presence }) =>
         setPresence(userId, presence)
       ),
+      wsClient.on<{ messageId: string; channelId: string; reactions: ReactionGroup[] }>('REACTION_ADD', ({ messageId, reactions }) => {
+        useReactionStore.getState().setReactions(messageId, reactions)
+      }),
+      wsClient.on<{ messageId: string; channelId: string; reactions: ReactionGroup[] }>('REACTION_REMOVE', ({ messageId, reactions }) => {
+        useReactionStore.getState().setReactions(messageId, reactions)
+      }),
+      wsClient.on<{ userId: string; channelId: string }>('TYPING_START', ({ userId, channelId }) => {
+        useTypingStore.getState().setTyping(channelId, userId)
+      }),
     ]
     return () => offs.forEach((off) => off())
   }, [])

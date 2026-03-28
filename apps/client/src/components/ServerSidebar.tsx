@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useServerStore } from '../store/serverStore'
+import { CreateServerModal } from './modals/CreateServerModal'
 import type { Server } from '@aicord/shared'
 
 function ServerIcon({ server, active, onClick }: { server: Server; active: boolean; onClick: () => void }) {
@@ -26,6 +28,7 @@ function ServerIcon({ server, active, onClick }: { server: Server; active: boole
 export function ServerSidebar() {
   const { servers, activeServerId, setActiveServer, fetchChannels } = useServerStore()
   const navigate = useNavigate()
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   const handleSelectServer = async (serverId: string) => {
     setActiveServer(serverId)
@@ -59,15 +62,17 @@ export function ServerSidebar() {
       <button
         className="w-12 h-12 bg-bg-secondary hover:bg-success text-success hover:text-white rounded-full hover:rounded-2xl flex items-center justify-center transition-all duration-200 text-2xl font-light mt-1"
         title="Add a Server"
-        onClick={() => {
-          const name = window.prompt('Server name:')
-          if (name?.trim()) {
-            useServerStore.getState().createServer(name.trim()).then((s) => handleSelectServer(s.id))
-          }
-        }}
+        onClick={() => setShowCreateModal(true)}
       >
         +
       </button>
+
+      {showCreateModal && (
+        <CreateServerModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(serverId) => handleSelectServer(serverId)}
+        />
+      )}
     </div>
   )
 }

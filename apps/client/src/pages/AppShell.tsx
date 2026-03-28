@@ -7,6 +7,7 @@ import { useWSStore } from '../store/wsStore'
 import { ServerSidebar } from '../components/ServerSidebar'
 import { ChannelSidebar } from '../components/ChannelSidebar'
 import { ChannelView } from './ChannelView'
+import { DMView } from './DMView'
 
 function NoChannelSelected() {
   return (
@@ -74,6 +75,7 @@ export function AppShell() {
             </div>
           }
         />
+        <Route path="/dms/:dmId" element={<DMView />} />
       </Routes>
     </div>
   )

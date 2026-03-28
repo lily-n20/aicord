@@ -11,6 +11,8 @@ import { wsRoutes } from './routes/ws'
 import { serverRoutes } from './routes/servers'
 import { channelRoutes } from './routes/channels'
 import { messageRoutes } from './routes/messages'
+import { reactionRoutes } from './routes/reactions'
+import { dmRoutes } from './routes/dms'
 import { pool } from './db'
 
 const app = Fastify({
@@ -63,6 +65,8 @@ async function bootstrap() {
   await app.register(serverRoutes, { prefix: '/api/v1/servers' })
   await app.register(channelRoutes, { prefix: '/api/v1' })
   await app.register(messageRoutes, { prefix: '/api/v1' })
+  await app.register(reactionRoutes, { prefix: '/api/v1/messages' })
+  await app.register(dmRoutes, { prefix: '/api/v1/dms' })
   await app.register(wsRoutes)
 
   const port = parseInt(process.env.PORT ?? '3000', 10)

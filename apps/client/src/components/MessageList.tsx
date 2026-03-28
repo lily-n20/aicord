@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMessageStore, MessageWithAuthor } from '../store/messageStore'
 import { MessageItem, DateSeparator } from './MessageItem'
+import { TypingIndicator } from './TypingIndicator'
 import { wsClient } from '../lib/ws'
 
 type ListItem =
@@ -83,32 +84,35 @@ export function MessageList({ channelId }: { channelId: string }) {
   }
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
-      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-        {virtualizer.getVirtualItems().map((vItem) => {
-          const item = items[vItem.index]
-          return (
-            <div
-              key={vItem.key}
-              data-index={vItem.index}
-              ref={virtualizer.measureElement}
-              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vItem.start}px)` }}
-            >
-              {item.type === 'separator' ? (
-                <DateSeparator date={item.date} />
-              ) : (
-                <MessageItem
-                  message={item.message}
-                  grouped={shouldGroup(
-                    messages,
-                    messages.findIndex((m) => m.id === item.message.id)
-                  )}
-                />
-              )}
-            </div>
-          )
-        })}
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div ref={parentRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((vItem) => {
+            const item = items[vItem.index]
+            return (
+              <div
+                key={vItem.key}
+                data-index={vItem.index}
+                ref={virtualizer.measureElement}
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vItem.start}px)` }}
+              >
+                {item.type === 'separator' ? (
+                  <DateSeparator date={item.date} />
+                ) : (
+                  <MessageItem
+                    message={item.message}
+                    grouped={shouldGroup(
+                      messages,
+                      messages.findIndex((m) => m.id === item.message.id)
+                    )}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
+      <TypingIndicator channelId={channelId} />
     </div>
   )
 }
