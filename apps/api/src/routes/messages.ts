@@ -6,6 +6,8 @@ import { messages, channels, memberships, users } from '../db/schema'
 import { requireAuth } from '../middleware/auth'
 import { Errors } from '../lib/errors'
 import { redis } from '../lib/redis'
+import { logger } from '../lib/logger'
+import { aiService } from '../services/ai/AIService'
 
 async function assertChannelAccess(channelId: string, userId: string) {
   const [channel] = await db.select().from(channels).where(eq(channels.id, channelId)).limit(1)
@@ -119,6 +121,11 @@ export const messageRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Publish to Redis for WebSocket broadcast
     await redis.publish(`channel:${id}`, JSON.stringify({ op: 'MESSAGE_CREATE', d: payload }))
+
+    // Trigger AI service non-blocking
+    aiService.handleNewMessage(message.id, id, body.data.content, request.user.sub).catch((err) =>
+      logger.warn({ err }, 'AI service error')
+    )
 
     return reply.status(201).send({ message: payload })
   })

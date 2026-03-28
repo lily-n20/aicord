@@ -9,7 +9,15 @@ import {
   pgEnum,
   unique,
   index,
+  customType,
 } from 'drizzle-orm/pg-core'
+
+// pgvector custom type
+const vector = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return 'vector(1536)'
+  },
+})
 
 export const presenceEnum = pgEnum('presence', ['online', 'idle', 'offline', 'ai_assisted'])
 export const userRoleEnum = pgEnum('user_role', ['owner', 'admin', 'member', 'guest'])
@@ -158,3 +166,21 @@ export const aiAgents = pgTable('ai_agents', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
+
+export const aiContexts = pgTable(
+  'ai_contexts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    channelId: uuid('channel_id')
+      .references(() => channels.id, { onDelete: 'cascade' })
+      .notNull(),
+    messageId: uuid('message_id')
+      .references(() => messages.id, { onDelete: 'cascade' })
+      .notNull(),
+    embedding: vector('embedding').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    channelIdx: index('ai_contexts_channel_idx').on(t.channelId),
+  })
+)
