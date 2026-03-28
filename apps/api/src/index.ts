@@ -8,6 +8,9 @@ import { AppError } from './lib/errors'
 import { authRoutes } from './routes/auth'
 import { userRoutes } from './routes/users'
 import { wsRoutes } from './routes/ws'
+import { serverRoutes } from './routes/servers'
+import { channelRoutes } from './routes/channels'
+import { messageRoutes } from './routes/messages'
 import { pool } from './db'
 
 const app = Fastify({
@@ -57,6 +60,9 @@ async function bootstrap() {
 
   await app.register(authRoutes, { prefix: '/api/v1/auth' })
   await app.register(userRoutes, { prefix: '/api/v1/users' })
+  await app.register(serverRoutes, { prefix: '/api/v1/servers' })
+  await app.register(channelRoutes, { prefix: '/api/v1' })
+  await app.register(messageRoutes, { prefix: '/api/v1' })
   await app.register(wsRoutes)
 
   const port = parseInt(process.env.PORT ?? '3000', 10)

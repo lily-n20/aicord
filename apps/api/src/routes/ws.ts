@@ -5,6 +5,7 @@ import { db } from '../db'
 import { users, servers, memberships } from '../db/schema'
 import { verifyAccessToken } from '../lib/jwt'
 import { logger } from '../lib/logger'
+import { redisSub } from '../lib/redis'
 import type { WSEvent, ReadyPayload } from '@aicord/shared'
 
 interface ConnectedClient {
@@ -29,6 +30,27 @@ export function broadcast(channelId: string, op: string, data: unknown, excludeU
     if (client.subscribedChannels.has(channelId)) {
       send(client.ws, op, data)
     }
+  }
+}
+
+// Redis PubSub: forward channel messages to subscribed WS clients
+redisSub.on('message', (redisChannel: string, rawMessage: string) => {
+  try {
+    const channelId = redisChannel.replace('channel:', '')
+    const { op, d } = JSON.parse(rawMessage)
+    broadcast(channelId, op, d)
+  } catch {
+    // ignore
+  }
+})
+
+const subscribedRedisChannels = new Set<string>()
+
+export function ensureRedisSubscription(channelId: string): void {
+  const key = `channel:${channelId}`
+  if (!subscribedRedisChannels.has(key)) {
+    redisSub.subscribe(key)
+    subscribedRedisChannels.add(key)
   }
 }
 
@@ -118,7 +140,7 @@ export const wsRoutes: FastifyPluginAsync = async (fastify) => {
 
     const heartbeatWatchdog = setInterval(() => {
       if (Date.now() - client.lastHeartbeat > 90_000) {
-        logger.info({ userId }, 'WebSocket heartbeat timeout — closing connection')
+        logger.info({ userId }, 'WebSocket heartbeat timeout')
         ws.close(4000, 'Heartbeat timeout')
         clearInterval(heartbeatWatchdog)
       }
@@ -141,6 +163,7 @@ export const wsRoutes: FastifyPluginAsync = async (fastify) => {
         case 'SUBSCRIBE': {
           const { channelId } = event.d as { channelId: string }
           client.subscribedChannels.add(channelId)
+          ensureRedisSubscription(channelId)
           break
         }
 
